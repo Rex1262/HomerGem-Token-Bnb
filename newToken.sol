@@ -236,11 +236,23 @@ interface IBEP20 {
 
 error TransferFaild();
 error youDontHaveBalance();
+error youDontApprove();
+error ContractIsNotTheOwner();
+error pleaseWaitForReward();
+error youAreNotEligible();
+error stakingtimeIsRemain();
 
 contract newToken is ERC20 {
    
     address payable public  marketingWallet;
     address payable public liquidityWallet;
+
+     IERC20 private token;
+    uint256 stakingId;
+    uint256 public reward;
+    uint256 public lastRewards;
+    address[] public stakerAddress;
+   
     
     //tax persontage 
     uint256 public burn;//2%
@@ -248,9 +260,23 @@ contract newToken is ERC20 {
     uint256 public liquidity; //2%
     
     address private Owner;
-    
+
+    bool public enableStaking;
+
+       
+    mapping(address => uint256) public lastReward;
+    mapping(uint256 => stake) public staked;
+    mapping(address => uint256) public remainReward;
+    mapping(address => bool) public isStaking;
     mapping(address => bool) blackList;
 
+    struct stake {
+        uint256 stakedAmount;
+        uint256 stakingStart;
+        uint256 stakingEnd;
+        address stakerAddress;
+        uint256 rewardPercentage;
+    }
 
     modifier onlyOwner {
       require(msg.sender == Owner,"You are not Authorize");
@@ -272,6 +298,8 @@ contract newToken is ERC20 {
         _pancakePairAddress = IPancakeFactory(_pancakeRouter.factory()).createPair(address(this), _pancakeRouter.WETH());
         marketingWallet = payable(address(this));
         liquidityWallet = payable(address(this));
+        token = IERC20(address(this));
+        reward = 3;
     }
     
     function decimals() public view virtual override returns (uint8) {
@@ -390,4 +418,139 @@ contract newToken is ERC20 {
         withdraw();
     }
 
+
+    // function removeTokenId(uint256 _tokenId) private {
+    //     for(uint256 i = 0; i<nftsIds.length; ++i){
+    //         if(_tokenId==nftsIds[i]){
+    //             for(uint256 j = i; j<nftsIds.length-1; ++j){
+    //                 nftsIds[j]= nftsIds[j+1];
+    //             }
+    //         }
+    //     }
+    //     nftsIds.pop();
+    // }
+
+    function setReward(uint256 newReward) public onlyOwner {
+        require(newReward < 100, "please enter valid percentage");
+        reward = newReward;
+    }
+
+    function changeEnableStaking() public onlyOwner {
+        enableStaking = true;
+    }
+
+    // function WithdrawToken() public onlyOwner {
+    //     if (token.balanceOf(address(this)) > 0) {
+    //         token.transfer(Owner,token.balanceOf(address(this)));
+    //     } else {
+    //         revert youDontHaveBalance();
+    //     }
+    // }
+
+    //////////////////////////// staking //////////////////////////
+
+    function stakeToken(uint256 _amount, uint256 _duration) external {
+        require(enableStaking,"please wait for staking enable");
+        if (token.balanceOf(msg.sender) < _amount) {
+            revert youDontHaveBalance();
+        }
+
+        require(_duration == 15 || _duration == 45 ||_duration == 95,"please enter 15 45 95 days duration ");
+
+        token.transferFrom(msg.sender, address(this), _amount);
+        uint256 endTime = block.timestamp + (_duration*1 days);
+        
+        uint256 temp = checkReward(stakerAddress.length);
+        console.log("temp+++++++++++++checkReward ",temp);
+        stakingId++;
+        staked[stakingId]=
+            stake(_amount, block.timestamp,endTime,msg.sender,temp);
+
+        if (!isStaking[msg.sender]) {
+        stakerAddress.push(msg.sender);
+        }
+        // update staking status
+        isStaking[msg.sender] = true;
+    }
+
+    function unstakeAndClaimRewards(uint256 _stakingId) public {
+        stake memory Stake = staked[_stakingId];
+
+        if (block.timestamp < Stake.stakingEnd) {
+            revert stakingtimeIsRemain();
+        }
+     else {
+            require(
+                block.timestamp > Stake.stakingStart + 1 days,
+                "please wait for one day"
+            );
+            uint256 remainTime = block.timestamp - Stake.stakingStart;
+            uint256 timePeriod = remainTime / 1 days;
+            uint256 amountInDays = payoutPerDay(Stake.stakedAmount,Stake.rewardPercentage) / 365 days;
+            uint256 totalReward = amountInDays * timePeriod;
+            console.log("TotalRewardAmount ++++++++++++++",totalReward);
+            uint256 rewarded = (Stake.stakedAmount+totalReward);
+            console.log("Total balance  ++++++++++++++",rewarded);
+            token.transfer(msg.sender, rewarded);
+            delete staked[stakingId];
+        }
+    }
+
+
+    function getStakingAddress() public view returns (address[] memory) {
+        address[] memory stakers = new address[](stakerAddress.length);
+        for (uint256 i = 0; i < stakerAddress.length; ++i) {
+            stakers[i] = stakerAddress[i];
+        }
+        return stakers;
+    }
+
+    function unstake() public {
+        for (uint256 i = 0; i < stakerAddress.length; ++i) {
+            if (msg.sender ==  stakerAddress[i]) {
+                for (uint256 j = i; j < stakerAddress.length - 1; ++j) {
+                    stakerAddress[j] = stakerAddress[j + 1];
+                }
+            }
+        }
+        stakerAddress.pop();
+    }
+
+    function payoutPerDay(uint256 _amount, uint256 _reward) public pure returns (uint256 _payOutAmount) {
+        _payOutAmount = ((_amount * _reward) / 10000);
+    }
+
+    function checkReward(uint256 _value) internal pure returns(uint256) {
+    if(_value < 100 ){
+        return 300;
+    }
+    else if(_value < 200){
+        return 290;
+    }
+    else if(_value < 300){
+        return 280;
+    }
+    else if(_value < 400){
+        return 270;
+    }
+    else if(_value < 500){
+        return 260;
+    }
+    else if(_value < 600){
+        return 250;
+    }
+    else if(_value < 700){
+        return 240;
+    }
+    else if(_value < 800){
+        return 230;
+    }    
+    else {
+        return 220;
+
+    }
+    }
+  
 }
+
+    
